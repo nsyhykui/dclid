@@ -93,17 +93,26 @@ public class DclidDaemon {
     private void handleTcp(Socket client) {
         try {
             BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
+            OutputStream out = client.getOutputStream();
 
             // 1. 握手
             String authLine = reader.readLine(); 
             if (authLine == null || !authLine.startsWith("AUTH ")) { client.close(); return; }
             int uid = Integer.parseInt(authLine.substring(5).trim());
             
+            // 2. 阻塞等待授权
             if (AuthManager.get(context).awaitDecision(uid, 60000) != AuthManager.ALLOWED) {
-                client.close(); return;
+                out.write("DENY\n".getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                client.close(); 
+                return;
             }
 
-            // 2. 尺寸
+            // 3. 授权通过，发送 OK 唤醒客户端
+            out.write("OK\n".getBytes(StandardCharsets.UTF_8));
+            out.flush();
+
+            // 4. 读取 SIZE
             String sizeLine = reader.readLine();
             int rows = 24, cols = 80;
             if (sizeLine != null && sizeLine.startsWith("SIZE ")) {
@@ -111,7 +120,7 @@ public class DclidDaemon {
                 rows = Integer.parseInt(parts[1]); cols = Integer.parseInt(parts[2]);
             }
 
-            // 3. PTY
+            // 5. 启动 PTY
             PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols);
             if (pty == null) { client.close(); return; }
 
@@ -120,7 +129,7 @@ public class DclidDaemon {
             pty.outputStream.write(aliasCmd.getBytes(StandardCharsets.UTF_8));
             pty.outputStream.flush();
 
-            // 4. 转发
+            // 6. 双向转发
             InputStream clientIn = client.getInputStream();
             OutputStream clientOut = client.getOutputStream();
             new Thread(() -> transferStream(pty.inputStream, clientOut)).start();
