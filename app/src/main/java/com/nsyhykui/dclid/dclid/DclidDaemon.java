@@ -127,7 +127,6 @@ public class DclidDaemon {
                 String startCmd = "alias pm='" + dcliBinPath + " pm'; " +
                                   "alias device='" + dcliBinPath + " device'; " + cmd;
                 Process process = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", startCmd});
-                
                 InputStream in = process.getInputStream();
                 InputStream err = process.getErrorStream();
                 byte[] buf = new byte[4096]; int len;
@@ -144,28 +143,15 @@ public class DclidDaemon {
                 rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
-            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, "/system/bin/sh -i");
+            // ★ 核心修复：alias 和 stty echo 一起塞进 sh -c，底层已关回显，所以绝对无痕且不清屏
+            String startCmd = "alias pm='" + dcliBinPath + " pm'; " +
+                              "alias device='" + dcliBinPath + " device'; " +
+                              "export PS1='$ '; " +
+                              "stty echo; " +
+                              "exec /system/bin/sh -i";
+
+            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, startCmd);
             if (pty == null) { client.close(); return; }
-
-            try {
-                // 完美无痕注入：
-                // 1. 关闭回显
-                pty.outputStream.write("stty -echo\n".getBytes(StandardCharsets.UTF_8));
-                pty.outputStream.flush();
-                Thread.sleep(50);
-
-                // 2. 注入 alias
-                String inject = "alias pm='" + dcliBinPath + " pm'\n" +
-                                "alias device='" + dcliBinPath + " device'\n" +
-                                "export PS1='$ '\n";
-                pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
-                pty.outputStream.flush();
-                Thread.sleep(50);
-
-                // 3. 恢复回显，清屏
-                pty.outputStream.write("stty echo\necho -e '\\033[2J\\033[H'\n".getBytes(StandardCharsets.UTF_8));
-                pty.outputStream.flush();
-            } catch (Exception ignored) {}
 
             InputStream clientIn = client.getInputStream();
             OutputStream clientOut = client.getOutputStream();
