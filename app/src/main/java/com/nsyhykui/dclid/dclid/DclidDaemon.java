@@ -105,7 +105,7 @@ public class DclidDaemon {
             if (authLine == null || !authLine.startsWith("AUTH ")) { client.close(); return; }
             String[] parts = authLine.split(" ");
             int uid = Integer.parseInt(parts[1]);
-            String token = parts[2];
+            String token = parts[2].trim(); 
             SharedPreferences sp = context.getSharedPreferences("dclid_auth", Context.MODE_PRIVATE);
 
             if (!token.equals(sp.getString("token_" + uid, ""))) {
@@ -120,44 +120,47 @@ public class DclidDaemon {
 
             String nextLine = reader.readLine();
             String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-            
-            // 1. 单发命令模式
-            if (nextLine.startsWith("EXEC ")) {
-                String cmd = nextLine.substring(5);
-                String startCmd = "alias pm='" + dcliBinPath + " pm'; " +
-                                  "alias device='" + dcliBinPath + " device'; " + cmd;
-                Process process = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", startCmd});
-                InputStream in = process.getInputStream();
-                InputStream err = process.getErrorStream();
-                byte[] buf = new byte[4096]; int len;
-                while ((len = in.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
-                while ((len = err.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
-                process.waitFor();
-                client.close(); return;
-            }
 
-            // 2. PTY 交互模式
             int rows = 24, cols = 80;
             if (nextLine != null && nextLine.startsWith("SIZE ")) {
                 String[] p = nextLine.split(" ");
                 rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
-            // ★ 核心修复：alias 和 stty echo 一起塞进 sh -c，底层已关回显，所以绝对无痕且不清屏
-            String startCmd = "alias pm='" + dcliBinPath + " pm'; " +
-                              "alias device='" + dcliBinPath + " device'; " +
-                              "export PS1='$ '; " +
-                              "stty echo; " +
-                              "exec /system/bin/sh -i";
-
-            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, startCmd);
+            // 无论什么模式，都启动 PTY
+            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, "/system/bin/sh -i");
             if (pty == null) { client.close(); return; }
+
+            // 统一注入 alias
+            try {
+                String inject = "alias pm='" + dcliBinPath + " pm'\n" +
+                                "alias device='" + dcliBinPath + " device'\n" +
+                                "export PS1='$ '\n";
+                Thread.sleep(100);
+                pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
+                pty.outputStream.flush();
+            } catch (Exception ignored) {}
+
+            // 如果是 EXEC 模式，追加命令和退出指令
+            if (nextLine != null && nextLine.startsWith("EXEC ")) {
+                String cmd = nextLine.substring(5);
+                try {
+                    Thread.sleep(50); // 确保 alias 已生效
+                    pty.outputStream.write((cmd + "\nexit\n").getBytes(StandardCharsets.UTF_8));
+                    pty.outputStream.flush();
+                } catch (Exception ignored) {}
+            }
 
             InputStream clientIn = client.getInputStream();
             OutputStream clientOut = client.getOutputStream();
             
+            // 将 PTY 的输出转发给客户端
             new Thread(() -> transfer(pty.inputStream, clientOut, client)).start();
-            new Thread(() -> transfer(clientIn, pty.outputStream, client)).start();
+            
+            // 只有交互模式才需要把客户端的输入转发给 PTY
+            if (nextLine == null || !nextLine.startsWith("EXEC ")) {
+                new Thread(() -> transfer(clientIn, pty.outputStream, client)).start();
+            }
 
         } catch (Exception e) { 
             try { client.close(); } catch (Exception ignored) {} 
