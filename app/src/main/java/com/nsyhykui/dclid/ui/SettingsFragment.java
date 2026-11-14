@@ -9,6 +9,7 @@ import androidx.preference.SwitchPreferenceCompat;
 import com.nsyhykui.dclid.R;
 import com.nsyhykui.dclid.dclid.DclidService;
 import com.rosan.dhizuku.api.Dhizuku;
+import com.rosan.dhizuku.api.DhizukuRequestPermissionListener;
 
 public class SettingsFragment extends PreferenceFragmentCompat {
     @Override
@@ -22,10 +23,19 @@ public class SettingsFragment extends PreferenceFragmentCompat {
                     if (Dhizuku.isPermissionGranted()) {
                         Toast.makeText(getContext(), R.string.toast_perm_granted, Toast.LENGTH_SHORT).show();
                     } else {
-                        Dhizuku.requestPermission(result -> requireActivity().runOnUiThread(() -> {
-                            int msgRes = (result == 0) ? R.string.toast_perm_granted : R.string.toast_perm_denied;
-                            Toast.makeText(getContext(), msgRes, Toast.LENGTH_SHORT).show();
-                        }));
+                        // 改用标准的匿名内部类，解决 Lambda 报错
+                        Dhizuku.requestPermission(new DhizukuRequestPermissionListener() {
+                            @Override
+                            public void onRequestPermission(int grantResult) {
+                                requireActivity().runOnUiThread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        int msgRes = (grantResult == 0) ? R.string.toast_perm_granted : R.string.toast_perm_denied;
+                                        Toast.makeText(getContext(), msgRes, Toast.LENGTH_SHORT).show();
+                                    }
+                                });
+                            }
+                        });
                     }
                 } else {
                     Toast.makeText(getContext(), R.string.toast_init_failed, Toast.LENGTH_SHORT).show();
