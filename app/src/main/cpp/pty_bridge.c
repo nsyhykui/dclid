@@ -4,16 +4,24 @@
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
 
 JNIEXPORT jint JNICALL
 Java_com_nsyhykui_dclid_shell_PtyBridge_createSubprocess(
-        JNIEnv *env, jobject thiz, jint rows, jint cols) {
+        JNIEnv *env, jobject thiz, jint rows, jint cols, jstring cmdStr) {
     struct winsize sz;
     sz.ws_row = rows; sz.ws_col = cols; sz.ws_xpixel = 0; sz.ws_ypixel = 0;
     int master_fd;
     pid_t pid = forkpty(&master_fd, NULL, NULL, &sz);
-    if (pid == 0) { execl("/system/bin/sh", "sh", "-i", NULL); _exit(1); }
-    else if (pid > 0) {
+
+    if (pid == 0) {
+        // 子进程
+        const char *cmd = (*env)->GetStringUTFChars(env, cmdStr, 0);
+        execl("/system/bin/sh", "sh", "-c", cmd, NULL);
+        _exit(1);
+    } else if (pid > 0) {
+        // 父进程
         int flags = fcntl(master_fd, F_GETFL, 0);
         fcntl(master_fd, F_SETFL, flags | O_NONBLOCK);
         return master_fd;

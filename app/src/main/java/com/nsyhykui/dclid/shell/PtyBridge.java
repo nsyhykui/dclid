@@ -6,7 +6,7 @@ import java.io.FileOutputStream;
 
 public class PtyBridge {
     static { System.loadLibrary("pty_bridge"); }
-    public static native int createSubprocess(int rows, int cols);
+    public static native int createSubprocess(int rows, int cols, String cmdStr);
     public static native void setPtyWindowSize(int fd, int rows, int cols);
 
     public static class PtySession {
@@ -28,8 +28,8 @@ public class PtyBridge {
         }
     }
 
-    public static PtySession createSession(int rows, int cols) {
-        int fd = createSubprocess(rows, cols);
+    public static PtySession createSession(int rows, int cols, String cmdStr) {
+        int fd = createSubprocess(rows, cols, cmdStr);
         return (fd < 0) ? null : new PtySession(fd);
     }
 }

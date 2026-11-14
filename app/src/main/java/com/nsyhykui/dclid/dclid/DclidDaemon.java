@@ -95,12 +95,10 @@ public class DclidDaemon {
             BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
             OutputStream out = client.getOutputStream();
 
-            // 1. 握手
             String authLine = reader.readLine(); 
             if (authLine == null || !authLine.startsWith("AUTH ")) { client.close(); return; }
             int uid = Integer.parseInt(authLine.substring(5).trim());
             
-            // 2. 阻塞等待授权
             if (AuthManager.get(context).awaitDecision(uid, 60000) != AuthManager.ALLOWED) {
                 out.write("DENY\n".getBytes(StandardCharsets.UTF_8));
                 out.flush();
@@ -108,11 +106,9 @@ public class DclidDaemon {
                 return;
             }
 
-            // 3. 授权通过，发送 OK 唤醒客户端
             out.write("OK\n".getBytes(StandardCharsets.UTF_8));
             out.flush();
 
-            // 4. 读取 SIZE
             String sizeLine = reader.readLine();
             int rows = 24, cols = 80;
             if (sizeLine != null && sizeLine.startsWith("SIZE ")) {
@@ -120,16 +116,13 @@ public class DclidDaemon {
                 rows = Integer.parseInt(parts[1]); cols = Integer.parseInt(parts[2]);
             }
 
-            // 5. 启动 PTY
-            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols);
+            String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
+            // 直接用 sh -c 启动，执行完 alias 自动替换为交互式 sh -i
+            String startCmd = "alias pm='" + dcliBinPath + " pm'; alias device='" + dcliBinPath + " device'; exec /system/bin/sh -i";
+
+            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, startCmd);
             if (pty == null) { client.close(); return; }
 
-            String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-            String aliasCmd = "alias pm='" + dcliBinPath + " pm'; alias device='" + dcliBinPath + " device'; exec /system/bin/sh -i\n";
-            pty.outputStream.write(aliasCmd.getBytes(StandardCharsets.UTF_8));
-            pty.outputStream.flush();
-
-            // 6. 双向转发
             InputStream clientIn = client.getInputStream();
             OutputStream clientOut = client.getOutputStream();
             new Thread(() -> transferStream(pty.inputStream, clientOut)).start();
