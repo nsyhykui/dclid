@@ -37,7 +37,6 @@ android {
 
 dependencies {
     implementation 'androidx.core:core:1.13.1'
-    
-    // ★ 完美加载本地 libs 目录下的 Dhizuku-API
+    // 从本地 libs 加载 aar
     implementation fileTree(dir: 'libs', include: ['*.aar', '*.jar'])
 }
