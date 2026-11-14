@@ -5,7 +5,6 @@ import android.content.SharedPreferences;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.preference.PreferenceManager;
-import android.widget.Toast;
 import com.nsyhykui.dclid.R;
 import com.nsyhykui.dclid.core.AuthManager;
 import com.nsyhykui.dclid.core.CommandHandler;
@@ -43,18 +42,16 @@ public class DclidDaemon {
             udsServer = new LocalServerSocket("dclid_rpc");
             while (isRunning) {
                 LocalSocket socket = udsServer.accept();
-                new Thread(() -> handleUds(socket)).start();
+                new Thread(() -> {
+                    try {
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
+                        String cmd = reader.readLine();
+                        if (cmd != null) { writer.write(rpcHandler.process(cmd)); writer.flush(); }
+                        socket.close();
+                    } catch (Exception ignored) {}
+                }).start();
             }
-        } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    private void handleUds(LocalSocket socket) {
-        try {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
-            String cmd = reader.readLine();
-            if (cmd != null) { writer.write(rpcHandler.process(cmd)); writer.flush(); }
-            socket.close();
         } catch (Exception e) { e.printStackTrace(); }
     }
 
@@ -64,13 +61,7 @@ public class DclidDaemon {
             int port = Integer.parseInt(sp.getString("bind_port", "12345"));
             String ip = sp.getString("bind_ip", "0.0.0.0");
 
-            if (!isPortAvailable(port)) {
-                new android.os.Handler(context.getMainLooper()).post(() -> 
-                    Toast.makeText(context, context.getString(R.string.toast_port_in_use, port), Toast.LENGTH_LONG).show()
-                );
-                return;
-            }
-
+            if (!isPortAvailable(port)) return;
             tcpServer = new ServerSocket();
             tcpServer.setReuseAddress(true);
             tcpServer.bind(new InetSocketAddress(ip, port));
@@ -84,8 +75,7 @@ public class DclidDaemon {
 
     private boolean isPortAvailable(int port) {
         try (ServerSocket ss = new ServerSocket()) {
-            ss.setReuseAddress(true);
-            ss.bind(new InetSocketAddress(port));
+            ss.setReuseAddress(true); ss.bind(new InetSocketAddress(port));
             return true;
         } catch (IOException e) { return false; }
     }
@@ -95,27 +85,30 @@ public class DclidDaemon {
             BufferedReader reader = new BufferedReader(new InputStreamReader(client.getInputStream()));
             OutputStream out = client.getOutputStream();
 
-            String authLine = reader.readLine(); 
+            String authLine = reader.readLine();
             if (authLine == null || !authLine.startsWith("AUTH ")) { client.close(); return; }
-            int uid = Integer.parseInt(authLine.substring(5).trim());
+            String[] parts = authLine.split(" ");
             
-            if (AuthManager.get(context).awaitDecision(uid, 60000) != AuthManager.ALLOWED) {
-                out.write("DENY\n".getBytes(StandardCharsets.UTF_8));
-                out.flush();
-                client.close(); 
-                return;
+            int uid = Integer.parseInt(parts[1]);
+            String token = parts[2];
+            SharedPreferences sp = context.getSharedPreferences("dclid_auth", Context.MODE_PRIVATE);
+
+            // Token 免密直通逻辑
+            if (!token.equals(sp.getString("token_" + uid, ""))) {
+                out.write("NEED_AUTH\n".getBytes(StandardCharsets.UTF_8)); out.flush();
+                if (!AuthManager.get(context).awaitDecision(uid, 60000)) {
+                    out.write("DENY\n".getBytes(StandardCharsets.UTF_8)); out.flush();
+                    client.close(); return;
+                }
+                sp.edit().putString("token_" + uid, token).apply(); // 记住这台设备
             }
+            out.write("OK\n".getBytes(StandardCharsets.UTF_8)); out.flush();
 
-            // 告诉客户端验证通过
-            out.write("OK\n".getBytes(StandardCharsets.UTF_8));
-            out.flush();
-
-            // 读取尺寸
             String sizeLine = reader.readLine();
             int rows = 24, cols = 80;
             if (sizeLine != null && sizeLine.startsWith("SIZE ")) {
-                String[] parts = sizeLine.split(" ");
-                rows = Integer.parseInt(parts[1]); cols = Integer.parseInt(parts[2]);
+                String[] p = sizeLine.split(" ");
+                rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
             String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
@@ -127,26 +120,18 @@ public class DclidDaemon {
             InputStream clientIn = client.getInputStream();
             OutputStream clientOut = client.getOutputStream();
             
-            // ★ 核心修复：把 client 传进去，方便一方挂掉时另一方直接 close
-            new Thread(() -> transferStream(pty.inputStream, clientOut, client)).start();
-            new Thread(() -> transferStream(clientIn, pty.outputStream, client)).start();
+            new Thread(() -> transfer(pty.inputStream, clientOut, client)).start();
+            new Thread(() -> transfer(clientIn, pty.outputStream, client)).start();
 
-        } catch (Exception e) { e.printStackTrace(); try { client.close(); } catch (Exception ignored) {} }
+        } catch (Exception e) { try { client.close(); } catch (Exception ignored) {} }
     }
 
-    private void transferStream(InputStream in, OutputStream out, Socket socket) {
-        byte[] buffer = new byte[4096];
-        int len;
+    private void transfer(InputStream in, OutputStream out, Socket socket) {
+        byte[] buf = new byte[4096]; int len;
         try {
-            while ((len = in.read(buffer)) != -1) {
-                out.write(buffer, 0, len);
-                out.flush();
-            }
+            while ((len = in.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
         } catch (Exception ignored) {
-        } finally {
-            // ★ 核心修复：无论谁挂了，都关掉 Socket，逼迫另一端退出，解决假死问题
-            try { socket.close(); } catch (Exception ignored) {}
-        }
+        } finally { try { socket.close(); } catch (Exception ignored) {} }
     }
 
     public void stop() {
