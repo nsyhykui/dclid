@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.preference.PreferenceManager;
+import android.widget.Toast;
 import com.nsyhykui.dclid.R;
 import com.nsyhykui.dclid.core.AuthManager;
 import com.nsyhykui.dclid.core.CommandHandler;
@@ -20,20 +21,47 @@ import java.nio.charset.StandardCharsets;
 public class DclidDaemon {
     private final Context context;
     private final CommandHandler rpcHandler;
-    private boolean isRunning = false;
+    private volatile boolean isRunning = false;
+    private volatile boolean isTcpRunning = false;
     private ServerSocket tcpServer;
     private LocalServerSocket udsServer;
 
     public DclidDaemon(Context context) {
         this.context = context.getApplicationContext();
-        this.rpcHandler = new CommandHandler(new DhizukuDpm(context));
+        this.rpcHandler = new CommandHandler(context, new DhizukuDpm(context));
         AuthManager.get(context).setPromptListener(uid -> AuthOverlay.show(context, uid, "unknown"));
     }
 
     public void start() {
         if (isRunning) return;
         isRunning = true;
+        
+        // 1. 启动本地 UDS (给 libdcli_bin.so 用)
         new Thread(this::startUdsServer).start();
+        
+        // 2. 启动 TCP 监听
+        startTcpServerThread();
+        
+        // 3. 启动 5 秒看门狗
+        startWatchdog();
+    }
+
+    // 看门狗：每 5 秒检查一次 TCP 服务端是否存活
+    private void startWatchdog() {
+        new Thread(() -> {
+            while (isRunning) {
+                try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
+                if (!isRunning) break;
+                
+                if (!isTcpRunning) {
+                    // TCP 挂了，重新拉起
+                    startTcpServerThread();
+                }
+            }
+        }).start();
+    }
+
+    private void startTcpServerThread() {
         new Thread(this::startTcpServer).start();
     }
 
@@ -56,21 +84,32 @@ public class DclidDaemon {
     }
 
     private void startTcpServer() {
+        if (isTcpRunning) return;
         try {
             SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(context);
             int port = Integer.parseInt(sp.getString("bind_port", "12345"));
             String ip = sp.getString("bind_ip", "0.0.0.0");
 
-            if (!isPortAvailable(port)) return;
+            if (!isPortAvailable(port)) {
+                new android.os.Handler(context.getMainLooper()).post(() -> 
+                    Toast.makeText(context, "端口 " + port + " 被占用，等待重试...", Toast.LENGTH_SHORT).show()
+                );
+                return;
+            }
+
             tcpServer = new ServerSocket();
             tcpServer.setReuseAddress(true);
             tcpServer.bind(new InetSocketAddress(ip, port));
+            isTcpRunning = true;
 
-            while (isRunning) {
+            while (isRunning && isTcpRunning) {
                 Socket client = tcpServer.accept();
                 new Thread(() -> handleTcp(client)).start();
             }
-        } catch (Exception e) { e.printStackTrace(); }
+        } catch (Exception e) {
+            // 捕捉到异常，标记 TCP 已挂
+            isTcpRunning = false;
+        }
     }
 
     private boolean isPortAvailable(int port) {
@@ -93,14 +132,13 @@ public class DclidDaemon {
             String token = parts[2];
             SharedPreferences sp = context.getSharedPreferences("dclid_auth", Context.MODE_PRIVATE);
 
-            // Token 免密直通逻辑
             if (!token.equals(sp.getString("token_" + uid, ""))) {
                 out.write("NEED_AUTH\n".getBytes(StandardCharsets.UTF_8)); out.flush();
                 if (!AuthManager.get(context).awaitDecision(uid, 60000)) {
                     out.write("DENY\n".getBytes(StandardCharsets.UTF_8)); out.flush();
                     client.close(); return;
                 }
-                sp.edit().putString("token_" + uid, token).apply(); // 记住这台设备
+                sp.edit().putString("token_" + uid, token).apply();
             }
             out.write("OK\n".getBytes(StandardCharsets.UTF_8)); out.flush();
 
@@ -111,8 +149,16 @@ public class DclidDaemon {
                 rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
+            // 生成 ENV 脚本并注入给 sh
             String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-            String startCmd = "alias pm='" + dcliBinPath + " pm'; alias device='" + dcliBinPath + " device'; exec /system/bin/sh -i";
+            File envFile = new File(context.getCacheDir(), "dcli_env.sh");
+            try (FileWriter fw = new FileWriter(envFile)) {
+                fw.write("alias pm='" + dcliBinPath + " pm'\n");
+                fw.write("alias device='" + dcliBinPath + " device'\n");
+                fw.write("export PS1='dclid:\\W \\$ '\n"); 
+            } catch (Exception ignored) {}
+
+            String startCmd = "export ENV='" + envFile.getAbsolutePath() + "'; exec /system/bin/sh -i";
 
             PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, startCmd);
             if (pty == null) { client.close(); return; }
@@ -136,6 +182,7 @@ public class DclidDaemon {
 
     public void stop() {
         isRunning = false;
+        isTcpRunning = false;
         try { if (tcpServer != null) tcpServer.close(); } catch (Exception ignored) {}
         try { if (udsServer != null) udsServer.close(); } catch (Exception ignored) {}
     }

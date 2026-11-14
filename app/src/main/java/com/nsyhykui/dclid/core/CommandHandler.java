@@ -1,35 +1,45 @@
 package com.nsyhykui.dclid.core;
 
-import android.app.admin.DevicePolicyManager;
-import android.content.ComponentName;
+import android.content.Context;
 
 public class CommandHandler {
-    private final DhizukuDpm dpmHelper;
+    private final PmPackagesHandler pmPackagesHandler;
+    private final DeviceHandler deviceHandler;
 
-    public CommandHandler(DhizukuDpm dpmHelper) { this.dpmHelper = dpmHelper; }
+    public CommandHandler(Context context, DhizukuDpm dpmHelper) {
+        this.pmPackagesHandler = new PmPackagesHandler(context);
+        this.deviceHandler = new DeviceHandler(dpmHelper);
+    }
 
     public String process(String cmd) {
         String[] parts = cmd.trim().split("\\s+");
         String mainCmd = parts[0];
-        if (mainCmd.equals("pm") || mainCmd.equals("device")) {
-            return handleDoCommand(mainCmd, parts);
+
+        // 截取后面的参数
+        String[] args = new String[parts.length - 1];
+        System.arraycopy(parts, 1, args, 0, args.length);
+
+        try {
+            if (mainCmd.equals("pm")) {
+                return handlePm(args);
+            }
+            if (mainCmd.equals("device")) {
+                return deviceHandler.handle(args);
+            }
+            return "Failed: unknown command";
+        } catch (Throwable t) {
+            return "Failed: " + t.getMessage();
         }
-        return "Failed: Unknown command";
     }
 
-    private String handleDoCommand(String mainCmd, String[] args) {
-        try {
-            DevicePolicyManager dpm = dpmHelper.get();
-            ComponentName admin = dpmHelper.admin();
-            if (mainCmd.equals("pm") && args.length >= 3 && args[1].equals("hide")) {
-                dpm.setApplicationHidden(admin, args[2], true);
-                return "Success";
+    private String handlePm(String[] args) {
+        if (args.length >= 1 && args[0].equals("list")) {
+            if (args.length >= 2 && args[1].equals("packages")) {
+                String[] pkgArgs = new String[args.length - 2];
+                System.arraycopy(args, 2, pkgArgs, 0, pkgArgs.length);
+                return pmPackagesHandler.handle(pkgArgs);
             }
-            if (mainCmd.equals("device") && args.length >= 2 && args[1].equals("lock")) {
-                dpm.lockNow();
-                return "Success";
-            }
-            return "Failed: Command not implemented yet.";
-        } catch (Throwable t) { return "Failed: " + t.getMessage(); }
+        }
+        return "Failed: unsupported pm command";
     }
 }
