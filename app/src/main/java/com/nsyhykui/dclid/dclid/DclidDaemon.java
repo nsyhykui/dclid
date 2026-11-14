@@ -106,9 +106,11 @@ public class DclidDaemon {
                 return;
             }
 
+            // 告诉客户端验证通过
             out.write("OK\n".getBytes(StandardCharsets.UTF_8));
             out.flush();
 
+            // 读取尺寸
             String sizeLine = reader.readLine();
             int rows = 24, cols = 80;
             if (sizeLine != null && sizeLine.startsWith("SIZE ")) {
@@ -117,7 +119,6 @@ public class DclidDaemon {
             }
 
             String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-            // 直接用 sh -c 启动，执行完 alias 自动替换为交互式 sh -i
             String startCmd = "alias pm='" + dcliBinPath + " pm'; alias device='" + dcliBinPath + " device'; exec /system/bin/sh -i";
 
             PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, startCmd);
@@ -125,18 +126,27 @@ public class DclidDaemon {
 
             InputStream clientIn = client.getInputStream();
             OutputStream clientOut = client.getOutputStream();
-            new Thread(() -> transferStream(pty.inputStream, clientOut)).start();
-            new Thread(() -> transferStream(clientIn, pty.outputStream)).start();
+            
+            // ★ 核心修复：把 client 传进去，方便一方挂掉时另一方直接 close
+            new Thread(() -> transferStream(pty.inputStream, clientOut, client)).start();
+            new Thread(() -> transferStream(clientIn, pty.outputStream, client)).start();
 
         } catch (Exception e) { e.printStackTrace(); try { client.close(); } catch (Exception ignored) {} }
     }
 
-    private void transferStream(InputStream in, OutputStream out) {
+    private void transferStream(InputStream in, OutputStream out, Socket socket) {
         byte[] buffer = new byte[4096];
         int len;
         try {
-            while ((len = in.read(buffer)) != -1) { out.write(buffer, 0, len); out.flush(); }
-        } catch (Exception ignored) {}
+            while ((len = in.read(buffer)) != -1) {
+                out.write(buffer, 0, len);
+                out.flush();
+            }
+        } catch (Exception ignored) {
+        } finally {
+            // ★ 核心修复：无论谁挂了，都关掉 Socket，逼迫另一端退出，解决假死问题
+            try { socket.close(); } catch (Exception ignored) {}
+        }
     }
 
     public void stop() {
