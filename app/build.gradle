@@ -1,0 +1,40 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.nsyhykui.dclid'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.nsyhykui.dclid"
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName "0.0.0"
+
+        externalNativeBuild {
+            cmake {
+                cppFlags ""
+                abiFilters 'arm64-v8a'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+}
+
+dependencies {
+    // 无额外依赖，纯原生
+}
