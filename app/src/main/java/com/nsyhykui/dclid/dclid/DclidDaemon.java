@@ -79,7 +79,12 @@ public class DclidDaemon {
             int port = Integer.parseInt(sp.getString("bind_port", "12345"));
             String ip = sp.getString("bind_ip", "0.0.0.0");
 
-            if (!isPortAvailable(port)) return;
+            if (!isPortAvailable(port)) {
+                new android.os.Handler(context.getMainLooper()).post(() -> 
+                    Toast.makeText(context, "端口 " + port + " 被占用", Toast.LENGTH_SHORT).show()
+                );
+                return;
+            }
 
             tcpServer = new ServerSocket();
             tcpServer.setReuseAddress(true);
@@ -130,15 +135,14 @@ public class DclidDaemon {
                 rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
+            // ★ 核心修复：不再生成环境文件，直接把 alias 塞入 sh -c 执行
             String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-            File envFile = new File(context.getCacheDir(), "dcli_env.sh");
-            try (FileWriter fw = new FileWriter(envFile)) {
-                fw.write("alias pm='" + dcliBinPath + " pm'\n");
-                fw.write("alias device='" + dcliBinPath + " device'\n");
-                fw.write("export PS1='$ '\n"); 
-            } catch (Exception ignored) {}
+            String startCmd = "alias pm='" + dcliBinPath + " pm'; " +
+                              "alias device='" + dcliBinPath + " device'; " +
+                              "export PS1='$ '; " +
+                              "exec /system/bin/sh -i";
 
-            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, envFile.getAbsolutePath());
+            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, startCmd);
             if (pty == null) { client.close(); return; }
 
             InputStream clientIn = client.getInputStream();
