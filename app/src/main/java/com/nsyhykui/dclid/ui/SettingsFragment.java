@@ -11,21 +11,35 @@ import com.nsyhykui.dclid.dclid.DclidService;
 import com.rosan.dhizuku.api.Dhizuku;
 
 public class SettingsFragment extends PreferenceFragmentCompat {
-
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         setPreferencesFromResource(R.xml.settings, rootKey);
 
-        Preference dhizukuStatus = findPreference("dhizuku_status");
-        if (dhizukuStatus != null) {
-            boolean isInit = Dhizuku.init(requireContext());
-            if (isInit && Dhizuku.isPermissionGranted()) {
-                dhizukuStatus.setSummary("✅ 权限已获取");
-            } else if (isInit) {
-                dhizukuStatus.setSummary("⚠️ 初始化成功，但未授权");
-            } else {
-                dhizukuStatus.setSummary("❌ 初始化失败，请检查 Dhizuku");
-            }
+        Preference dhizukuBtn = findPreference("dhizuku_request");
+        if (dhizukuBtn != null) {
+            dhizukuBtn.setOnPreferenceClickListener(p -> {
+                if (Dhizuku.init(requireContext())) {
+                    if (Dhizuku.isPermissionGranted()) {
+                        Toast.makeText(getContext(), R.string.toast_perm_granted, Toast.LENGTH_SHORT).show();
+                    } else {
+                        Dhizuku.requestPermission(result -> requireActivity().runOnUiThread(() -> {
+                            int msgRes = (result == 0) ? R.string.toast_perm_granted : R.string.toast_perm_denied;
+                            Toast.makeText(getContext(), msgRes, Toast.LENGTH_SHORT).show();
+                        }));
+                    }
+                } else {
+                    Toast.makeText(getContext(), R.string.toast_init_failed, Toast.LENGTH_SHORT).show();
+                }
+                return true;
+            });
+        }
+
+        Preference authManage = findPreference("auth_manage");
+        if (authManage != null) {
+            authManage.setOnPreferenceClickListener(p -> {
+                startActivity(new Intent(requireContext(), UidManagerActivity.class));
+                return true;
+            });
         }
 
         SwitchPreferenceCompat serviceSwitch = findPreference("service_switch");
@@ -35,10 +49,10 @@ public class SettingsFragment extends PreferenceFragmentCompat {
                 Intent intent = new Intent(requireContext(), DclidService.class);
                 if (isChecked) {
                     requireContext().startForegroundService(intent);
-                    Toast.makeText(getContext(), "正在启动守护进程...", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(getContext(), R.string.toast_service_starting, Toast.LENGTH_SHORT).show();
                 } else {
                     requireContext().stopService(intent);
-                    Toast.makeText(getContext(), "守护进程已停止", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(getContext(), R.string.toast_service_stopped, Toast.LENGTH_SHORT).show();
                 }
                 return true;
             });

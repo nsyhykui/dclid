@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">dclid</string>
+    <string name="cat_dhizuku">Dhizuku 配置</string>
+    <string name="dhizuku_request_title">请求 Dhizuku 权限</string>
+    <string name="dhizuku_request_summary">点击请求 Device Owner 权限</string>
+    <string name="cat_server">服务端设置</string>
+    <string name="bind_port_title">监听端口</string>
+    <string name="bind_ip_title">监听地址</string>
+    <string name="service_switch_title">启动守护进程</string>
+    <string name="service_switch_summary">开启后允许终端连接</string>
+    <string name="cat_security">安全与权限</string>
+    <string name="auth_manage_title">授权管理</string>
+    <string name="auth_manage_summary">查看并管理已授权的 UID</string>
+    <string name="cat_about">关于</string>
+    <string name="version_title">版本信息</string>
+    <string name="version_summary">dclid 0.0.0</string>
+    <string name="auth_dialog_title">授权请求</string>
+    <string name="auth_dialog_msg">dcli (UID %1$d) 请求连接。\n\n是否允许？</string>
+    <string name="auth_allow">允许</string>
+    <string name="auth_deny">拒绝</string>
+    <string name="toast_perm_granted">权限已获取</string>
+    <string name="toast_perm_denied">权限被拒绝</string>
+    <string name="toast_init_failed">Dhizuku 初始化失败</string>
+    <string name="toast_service_starting">正在启动守护进程...</string>
+    <string name="toast_service_stopped">守护进程已停止</string>
+    <string name="toast_port_in_use">端口 %1$d 已被占用！</string>
+    <string name="uid_empty">暂无已授权的 UID</string>
+    <string name="uid_unknown">未知</string>
+    <string name="uid_revoke">撤销</string>
+</resources>

@@ -1,8 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 project(dclid C)
-
 add_library(pty_bridge SHARED pty_bridge.c)
 target_link_libraries(pty_bridge log)
-
 add_executable(dcli_bin dcli_main.c)
 set_target_properties(dcli_bin PROPERTIES SUFFIX ".so")

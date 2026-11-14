@@ -5,10 +5,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 
 public class PtyBridge {
-    static {
-        System.loadLibrary("pty_bridge");
-    }
-
+    static { System.loadLibrary("pty_bridge"); }
     public static native int createSubprocess(int rows, int cols);
     public static native void setPtyWindowSize(int fd, int rows, int cols);
 
@@ -24,17 +21,15 @@ public class PtyBridge {
             this.inputStream = new FileInputStream(pfd.getFileDescriptor());
             this.outputStream = new FileOutputStream(pfd.getFileDescriptor());
         }
-
         public void close() {
-            try { inputStream.close(); } catch (Exception e) {}
-            try { outputStream.close(); } catch (Exception e) {}
-            try { pfd.close(); } catch (Exception e) {}
+            try { inputStream.close(); } catch (Exception ignored) {}
+            try { outputStream.close(); } catch (Exception ignored) {}
+            try { pfd.close(); } catch (Exception ignored) {}
         }
     }
 
     public static PtySession createSession(int rows, int cols) {
         int fd = createSubprocess(rows, cols);
-        if (fd < 0) return null;
-        return new PtySession(fd);
+        return (fd < 0) ? null : new PtySession(fd);
     }
 }

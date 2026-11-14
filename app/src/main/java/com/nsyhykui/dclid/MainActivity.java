@@ -11,9 +11,9 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         if (getSupportActionBar() != null) getSupportActionBar().hide();
         if (savedInstanceState == null) {
-            FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
-            transaction.replace(android.R.id.content, new SettingsFragment());
-            transaction.commit();
+            FragmentTransaction tx = getSupportFragmentManager().beginTransaction();
+            tx.replace(android.R.id.content, new SettingsFragment());
+            tx.commit();
         }
     }
 }

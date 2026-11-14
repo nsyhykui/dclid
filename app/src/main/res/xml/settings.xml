@@ -1,53 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
-
-    <PreferenceCategory app:title="Dclid 守护进程">
-
-        <Preference
-            app:key="dhizuku_status"
-            app:title="Dhizuku 状态"
-            app:summary="检查 API 连接状态"
-            app:enabled="false" />
-
-        <SwitchPreferenceCompat
-            app:key="service_switch"
-            app:title="启动 Dclid 服务"
-            app:summary="开启后允许终端连接"
-            app:defaultValue="false" />
-
-        <Preference
-            app:key="service_endpoint"
-            app:title="服务端地址"
-            app:summary="127.0.0.1:12345" />
-
+    <PreferenceCategory app:title="@string/cat_dhizuku">
+        <Preference app:key="dhizuku_request" app:title="@string/dhizuku_request_title" app:summary="@string/dhizuku_request_summary" />
     </PreferenceCategory>
-
-    <PreferenceCategory app:title="终端设置">
-
-        <Preference
-            app:key="screen_size"
-            app:title="终端显示尺寸"
-            app:summary="默认 24x80 (高x宽)" />
-
-        <SwitchPreferenceCompat
-            app:key="log_switch"
-            app:title="输出详细日志"
-            app:summary="在界面下方显示网络通信记录"
-            app:defaultValue="false" />
-
+    <PreferenceCategory app:title="@string/cat_server">
+        <EditTextPreference app:key="bind_port" app:title="@string/bind_port_title" app:defaultValue="12345" />
+        <EditTextPreference app:key="bind_ip" app:title="@string/bind_ip_title" app:defaultValue="0.0.0.0" />
+        <SwitchPreferenceCompat app:key="service_switch" app:title="@string/service_switch_title" app:summary="@string/service_switch_summary" app:defaultValue="false" />
     </PreferenceCategory>
-
-    <PreferenceCategory app:title="关于">
-
-        <Preference
-            app:key="version"
-            app:title="版本信息"
-            app:summary="dclid 0.0.0 (Gradle 9.1.0)" />
-
-        <Preference
-            app:key="source_code"
-            app:title="查看源代码"
-            app:summary="前往 GitHub 仓库" />
-
+    <PreferenceCategory app:title="@string/cat_security">
+        <Preference app:key="auth_manage" app:title="@string/auth_manage_title" app:summary="@string/auth_manage_summary" />
+    </PreferenceCategory>
+    <PreferenceCategory app:title="@string/cat_about">
+        <Preference app:key="version" app:title="@string/version_title" app:summary="@string/version_summary" />
     </PreferenceCategory>
 </PreferenceScreen>
