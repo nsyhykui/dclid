@@ -86,18 +86,21 @@ public class DclidDaemon {
                 return;
             }
 
-            // 2. 注入 alias 启动 sh (以后完善)
+            // 2. 注入 alias 启动 sh
             String nativeLibDir = context.getApplicationInfo().nativeLibraryDir;
             String dcliBinPath = nativeLibDir + "/libdcli_bin.so";
-            String aliasCmd = "alias pm='" + dcliBinPath + " pm'; exec /system/bin/sh -i";
+            String aliasCmd = "alias pm='" + dcliBinPath + " pm'; exec /system/bin/sh -i\n";
             
-            // 为了简单，直接起一个 sh -c 注入环境
-            pty.outputStream.write((aliasCmd + "\n").getBytes(StandardCharsets.UTF_8));
+            pty.outputStream.write(aliasCmd.getBytes(StandardCharsets.UTF_8));
             pty.outputStream.flush();
 
-            // 3. 双向流转发
-            new Thread(() -> transferStream(pty.inputStream, client.getOutputStream())).start();
-            new Thread(() -> transferStream(client.getInputStream(), pty.outputStream)).start();
+            // 3. 双向流转发（提前获取流，防止 Lambda 抛出受检异常）
+            InputStream clientIn = client.getInputStream();
+            OutputStream clientOut = client.getOutputStream();
+            
+            new Thread(() -> transferStream(pty.inputStream, clientOut)).start();
+            new Thread(() -> transferStream(clientIn, pty.outputStream)).start();
+            
         } catch (Exception e) {
             e.printStackTrace();
             try { client.close(); } catch (Exception ignored) {}
