@@ -36,5 +36,7 @@ android {
 }
 
 dependencies {
-    // 无额外依赖，纯原生
+    implementation 'androidx.core:core:1.13.1'
+    // Dhizuku-API
+    implementation 'com.github.iamr0s:Dhizuku-API:2.6.0'
 }

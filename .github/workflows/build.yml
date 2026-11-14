@@ -24,14 +24,11 @@ jobs:
 
     - name: Install NDK, CMake and Accept Licenses
       run: |
-        # 强制设置 Android SDK 环境变量
         export ANDROID_HOME=/usr/local/lib/android/sdk
         export ANDROID_SDK_ROOT=$ANDROID_HOME
         
-        # 暴力自动接受所有协议（解决日志里卡在 1/7 的问题）
         yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
         
-        # 安装编译必需的 NDK、CMake 以及对应的 SDK 平台
         $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;28.2.13676358" "cmake;3.22.1" "platforms;android-36"
 
     - name: Grant execute permission for gradlew
