@@ -41,12 +41,14 @@ public class UidManagerActivity extends Activity {
     private void refresh() {
         listLayout.removeAllViews();
         Set<Integer> allowed = auth.getAllowedUids();
+        
         if (allowed.isEmpty()) {
             TextView tv = new TextView(this);
             tv.setText(R.string.uid_empty);
             listLayout.addView(tv);
             return;
         }
+        
         for (final Integer uid : allowed) {
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.HORIZONTAL);
@@ -58,9 +60,13 @@ public class UidManagerActivity extends Activity {
 
             Button btn = new Button(this);
             btn.setText(R.string.uid_revoke);
-            btn.setOnClickListener(v -> { auth.revoke(uid); refresh(); });
+            btn.setOnClickListener(v -> {
+                auth.revoke(uid);
+                refresh();
+            });
 
-            row.addView(tv); row.addView(btn);
+            row.addView(tv); 
+            row.addView(btn);
             listLayout.addView(row);
         }
     }
