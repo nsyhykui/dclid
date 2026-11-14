@@ -16,12 +16,6 @@ Java_com_nsyhykui_dclid_shell_PtyBridge_createSubprocess(
     pid_t pid = forkpty(&master_fd, NULL, NULL, &sz);
 
     if (pid == 0) {
-        // ★ 核心修复：子进程中强行关闭 ECHO，防止 alias 字符串回显到屏幕
-        struct termios t;
-        tcgetattr(0, &t);
-        t.c_lflag &= ~ECHO;
-        tcsetattr(0, TCSANOW, &t);
-
         const char *cmd = (*env)->GetStringUTFChars(env, cmdStr, 0);
         execl("/system/bin/sh", "sh", "-c", cmd, NULL);
         _exit(1);
