@@ -33,15 +33,19 @@ android {
             version "3.22.1"
         }
     }
+
+    // ★ 核心修复：强制解压 .so 和伪装的可执行文件到 nativeLibraryDir
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {
     implementation 'androidx.core:core:1.13.1'
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.preference:preference:1.2.1'
-    
-    // ★ 用于绕过 Android 隐藏 API 限制
     implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:4.3'
-    
     implementation fileTree(dir: 'libs', include: ['*.aar', '*.jar'])
 }
