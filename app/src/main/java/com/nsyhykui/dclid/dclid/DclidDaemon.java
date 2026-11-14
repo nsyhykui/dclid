@@ -25,10 +25,12 @@ public class DclidDaemon {
     private volatile boolean isTcpRunning = false;
     private ServerSocket tcpServer;
     private LocalServerSocket udsServer;
+    private String sockPath;
 
     public DclidDaemon(Context context) {
         this.context = context.getApplicationContext();
         this.rpcHandler = new CommandHandler(context, new DhizukuDpm(context));
+        this.sockPath = context.getCacheDir().getAbsolutePath() + "/dclid.sock";
         AuthManager.get(context).setPromptListener(uid -> AuthOverlay.show(context, uid, "unknown"));
     }
 
@@ -56,7 +58,13 @@ public class DclidDaemon {
 
     private void startUdsServer() {
         try {
-            udsServer = new LocalServerSocket("dclid_rpc");
+            File sockFile = new File(sockPath);
+            if (sockFile.exists()) sockFile.delete();
+            
+            // ★ 修复：使用绝对文件路径，而不是抽象命名空间
+            udsServer = new LocalServerSocket(sockPath);
+            android.util.Log.d("Dclid", "UDS Server listening at " + sockPath);
+
             while (isRunning) {
                 LocalSocket socket = udsServer.accept();
                 new Thread(() -> {
@@ -64,12 +72,20 @@ public class DclidDaemon {
                         BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                         BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
                         String cmd = reader.readLine();
-                        if (cmd != null) { writer.write(rpcHandler.process(cmd)); writer.flush(); }
+                        if (cmd != null) { 
+                            android.util.Log.d("Dclid", "UDS RPC: " + cmd);
+                            writer.write(rpcHandler.process(cmd)); 
+                            writer.flush(); 
+                        }
                         socket.close();
-                    } catch (Exception ignored) {}
+                    } catch (Exception e) { 
+                        android.util.Log.e("Dclid", "UDS error", e); 
+                    }
                 }).start();
             }
-        } catch (Exception e) { e.printStackTrace(); }
+        } catch (Exception e) { 
+            android.util.Log.e("Dclid", "UDS failed to start", e); 
+        }
     }
 
     private void startTcpServer() {
@@ -79,12 +95,7 @@ public class DclidDaemon {
             int port = Integer.parseInt(sp.getString("bind_port", "12345"));
             String ip = sp.getString("bind_ip", "0.0.0.0");
 
-            if (!isPortAvailable(port)) {
-                new android.os.Handler(context.getMainLooper()).post(() -> 
-                    Toast.makeText(context, "端口 " + port + " 被占用", Toast.LENGTH_SHORT).show()
-                );
-                return;
-            }
+            if (!isPortAvailable(port)) return;
 
             tcpServer = new ServerSocket();
             tcpServer.setReuseAddress(true);
@@ -140,12 +151,12 @@ public class DclidDaemon {
 
             try {
                 String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-                // ★ 核心修复：绝不清屏、绝不改终端状态，纯靠盲打输入 alias
-                String inject = "alias pm='" + dcliBinPath + " pm'\n" +
+                // ★ 修复：注入 DCLID_SOCK 环境变量，再注入 alias
+                String inject = "export DCLID_SOCK='" + sockPath + "'\n" +
+                                "alias pm='" + dcliBinPath + " pm'\n" +
                                 "alias device='" + dcliBinPath + " device'\n" +
                                 "export PS1='$ '\n" +
                                 "cd /sdcard\n";
-                // 稍微等个 100 毫秒，确保 sh 已经启动并准备好了接收输入
                 Thread.sleep(100);
                 pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
                 pty.outputStream.flush();
@@ -180,5 +191,6 @@ public class DclidDaemon {
         isTcpRunning = false;
         try { if (tcpServer != null) tcpServer.close(); } catch (Exception ignored) {}
         try { if (udsServer != null) udsServer.close(); } catch (Exception ignored) {}
+        try { new File(sockPath).delete(); } catch (Exception ignored) {}
     }
 }
