@@ -135,20 +135,18 @@ public class DclidDaemon {
                 rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
-            // ★ 核心修复：启动纯净的 sh -i
             PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, "/system/bin/sh -i");
             if (pty == null) { client.close(); return; }
 
-            // 向 PTY 注入命令：关闭回显 -> 注入 alias -> 切换目录 -> 清屏 -> 恢复回显
             try {
                 String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-                String inject = "stty -echo\n" +
-                                "alias pm='" + dcliBinPath + " pm'\n" +
+                // ★ 核心修复：绝不清屏、绝不改终端状态，纯靠盲打输入 alias
+                String inject = "alias pm='" + dcliBinPath + " pm'\n" +
                                 "alias device='" + dcliBinPath + " device'\n" +
                                 "export PS1='$ '\n" +
-                                "cd /sdcard\n" + 
-                                "clear\n" +
-                                "stty echo\n";
+                                "cd /sdcard\n";
+                // 稍微等个 100 毫秒，确保 sh 已经启动并准备好了接收输入
+                Thread.sleep(100);
                 pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
                 pty.outputStream.flush();
             } catch (Exception ignored) {}
