@@ -5,8 +5,6 @@ import android.content.SharedPreferences;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.preference.PreferenceManager;
-import android.widget.Toast;
-import com.nsyhykui.dclid.R;
 import com.nsyhykui.dclid.core.AuthManager;
 import com.nsyhykui.dclid.core.CommandHandler;
 import com.nsyhykui.dclid.core.DhizukuDpm;
@@ -25,12 +23,10 @@ public class DclidDaemon {
     private volatile boolean isTcpRunning = false;
     private ServerSocket tcpServer;
     private LocalServerSocket udsServer;
-    private String sockPath;
 
     public DclidDaemon(Context context) {
         this.context = context.getApplicationContext();
         this.rpcHandler = new CommandHandler(context, new DhizukuDpm(context));
-        this.sockPath = context.getCacheDir().getAbsolutePath() + "/dclid.sock";
         AuthManager.get(context).setPromptListener(uid -> AuthOverlay.show(context, uid, "unknown"));
     }
 
@@ -58,13 +54,7 @@ public class DclidDaemon {
 
     private void startUdsServer() {
         try {
-            File sockFile = new File(sockPath);
-            if (sockFile.exists()) sockFile.delete();
-            
-            // ★ 修复：使用绝对文件路径，而不是抽象命名空间
-            udsServer = new LocalServerSocket(sockPath);
-            android.util.Log.d("Dclid", "UDS Server listening at " + sockPath);
-
+            udsServer = new LocalServerSocket("dclid_rpc");
             while (isRunning) {
                 LocalSocket socket = udsServer.accept();
                 new Thread(() -> {
@@ -72,20 +62,12 @@ public class DclidDaemon {
                         BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                         BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(socket.getOutputStream()));
                         String cmd = reader.readLine();
-                        if (cmd != null) { 
-                            android.util.Log.d("Dclid", "UDS RPC: " + cmd);
-                            writer.write(rpcHandler.process(cmd)); 
-                            writer.flush(); 
-                        }
+                        if (cmd != null) { writer.write(rpcHandler.process(cmd)); writer.flush(); }
                         socket.close();
-                    } catch (Exception e) { 
-                        android.util.Log.e("Dclid", "UDS error", e); 
-                    }
+                    } catch (Exception ignored) {}
                 }).start();
             }
-        } catch (Exception e) { 
-            android.util.Log.e("Dclid", "UDS failed to start", e); 
-        }
+        } catch (Exception e) { e.printStackTrace(); }
     }
 
     private void startTcpServer() {
@@ -94,9 +76,7 @@ public class DclidDaemon {
             SharedPreferences sp = PreferenceManager.getDefaultSharedPreferences(context);
             int port = Integer.parseInt(sp.getString("bind_port", "12345"));
             String ip = sp.getString("bind_ip", "0.0.0.0");
-
             if (!isPortAvailable(port)) return;
-
             tcpServer = new ServerSocket();
             tcpServer.setReuseAddress(true);
             tcpServer.bind(new InetSocketAddress(ip, port));
@@ -124,7 +104,6 @@ public class DclidDaemon {
             String authLine = reader.readLine();
             if (authLine == null || !authLine.startsWith("AUTH ")) { client.close(); return; }
             String[] parts = authLine.split(" ");
-            
             int uid = Integer.parseInt(parts[1]);
             String token = parts[2];
             SharedPreferences sp = context.getSharedPreferences("dclid_auth", Context.MODE_PRIVATE);
@@ -139,10 +118,29 @@ public class DclidDaemon {
             }
             out.write("OK\n".getBytes(StandardCharsets.UTF_8)); out.flush();
 
-            String sizeLine = reader.readLine();
+            String nextLine = reader.readLine();
+            String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
+            
+            // 1. 单发命令模式
+            if (nextLine.startsWith("EXEC ")) {
+                String cmd = nextLine.substring(5);
+                String startCmd = "alias pm='" + dcliBinPath + " pm'; " +
+                                  "alias device='" + dcliBinPath + " device'; " + cmd;
+                Process process = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", startCmd});
+                
+                InputStream in = process.getInputStream();
+                InputStream err = process.getErrorStream();
+                byte[] buf = new byte[4096]; int len;
+                while ((len = in.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
+                while ((len = err.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
+                process.waitFor();
+                client.close(); return;
+            }
+
+            // 2. PTY 交互模式
             int rows = 24, cols = 80;
-            if (sizeLine != null && sizeLine.startsWith("SIZE ")) {
-                String[] p = sizeLine.split(" ");
+            if (nextLine != null && nextLine.startsWith("SIZE ")) {
+                String[] p = nextLine.split(" ");
                 rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
@@ -150,15 +148,22 @@ public class DclidDaemon {
             if (pty == null) { client.close(); return; }
 
             try {
-                String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-                // ★ 修复：注入 DCLID_SOCK 环境变量，再注入 alias
-                String inject = "export DCLID_SOCK='" + sockPath + "'\n" +
-                                "alias pm='" + dcliBinPath + " pm'\n" +
+                // 完美无痕注入：
+                // 1. 关闭回显
+                pty.outputStream.write("stty -echo\n".getBytes(StandardCharsets.UTF_8));
+                pty.outputStream.flush();
+                Thread.sleep(50);
+
+                // 2. 注入 alias
+                String inject = "alias pm='" + dcliBinPath + " pm'\n" +
                                 "alias device='" + dcliBinPath + " device'\n" +
-                                "export PS1='$ '\n" +
-                                "cd /sdcard\n";
-                Thread.sleep(100);
+                                "export PS1='$ '\n";
                 pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
+                pty.outputStream.flush();
+                Thread.sleep(50);
+
+                // 3. 恢复回显，清屏
+                pty.outputStream.write("stty echo\necho -e '\\033[2J\\033[H'\n".getBytes(StandardCharsets.UTF_8));
                 pty.outputStream.flush();
             } catch (Exception ignored) {}
 
@@ -191,6 +196,5 @@ public class DclidDaemon {
         isTcpRunning = false;
         try { if (tcpServer != null) tcpServer.close(); } catch (Exception ignored) {}
         try { if (udsServer != null) udsServer.close(); } catch (Exception ignored) {}
-        try { new File(sockPath).delete(); } catch (Exception ignored) {}
     }
 }
