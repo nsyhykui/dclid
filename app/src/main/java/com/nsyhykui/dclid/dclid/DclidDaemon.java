@@ -35,28 +35,17 @@ public class DclidDaemon {
     public void start() {
         if (isRunning) return;
         isRunning = true;
-        
-        // 1. 启动本地 UDS (给 libdcli_bin.so 用)
         new Thread(this::startUdsServer).start();
-        
-        // 2. 启动 TCP 监听
         startTcpServerThread();
-        
-        // 3. 启动 5 秒看门狗
         startWatchdog();
     }
 
-    // 看门狗：每 5 秒检查一次 TCP 服务端是否存活
     private void startWatchdog() {
         new Thread(() -> {
             while (isRunning) {
                 try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
                 if (!isRunning) break;
-                
-                if (!isTcpRunning) {
-                    // TCP 挂了，重新拉起
-                    startTcpServerThread();
-                }
+                if (!isTcpRunning) startTcpServerThread();
             }
         }).start();
     }
@@ -90,12 +79,7 @@ public class DclidDaemon {
             int port = Integer.parseInt(sp.getString("bind_port", "12345"));
             String ip = sp.getString("bind_ip", "0.0.0.0");
 
-            if (!isPortAvailable(port)) {
-                new android.os.Handler(context.getMainLooper()).post(() -> 
-                    Toast.makeText(context, "端口 " + port + " 被占用，等待重试...", Toast.LENGTH_SHORT).show()
-                );
-                return;
-            }
+            if (!isPortAvailable(port)) return;
 
             tcpServer = new ServerSocket();
             tcpServer.setReuseAddress(true);
@@ -106,10 +90,7 @@ public class DclidDaemon {
                 Socket client = tcpServer.accept();
                 new Thread(() -> handleTcp(client)).start();
             }
-        } catch (Exception e) {
-            // 捕捉到异常，标记 TCP 已挂
-            isTcpRunning = false;
-        }
+        } catch (Exception e) { isTcpRunning = false; }
     }
 
     private boolean isPortAvailable(int port) {
@@ -149,18 +130,15 @@ public class DclidDaemon {
                 rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
-            // 生成 ENV 脚本并注入给 sh
             String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
             File envFile = new File(context.getCacheDir(), "dcli_env.sh");
             try (FileWriter fw = new FileWriter(envFile)) {
                 fw.write("alias pm='" + dcliBinPath + " pm'\n");
                 fw.write("alias device='" + dcliBinPath + " device'\n");
-                fw.write("export PS1='dclid:\\W \\$ '\n"); 
+                fw.write("export PS1='$ '\n"); 
             } catch (Exception ignored) {}
 
-            String startCmd = "export ENV='" + envFile.getAbsolutePath() + "'; exec /system/bin/sh -i";
-
-            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, startCmd);
+            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, envFile.getAbsolutePath());
             if (pty == null) { client.close(); return; }
 
             InputStream clientIn = client.getInputStream();
@@ -169,15 +147,22 @@ public class DclidDaemon {
             new Thread(() -> transfer(pty.inputStream, clientOut, client)).start();
             new Thread(() -> transfer(clientIn, pty.outputStream, client)).start();
 
-        } catch (Exception e) { try { client.close(); } catch (Exception ignored) {} }
+        } catch (Exception e) { 
+            try { client.close(); } catch (Exception ignored) {} 
+        }
     }
 
     private void transfer(InputStream in, OutputStream out, Socket socket) {
         byte[] buf = new byte[4096]; int len;
         try {
-            while ((len = in.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
+            while ((len = in.read(buf)) != -1) { 
+                out.write(buf, 0, len); 
+                out.flush(); 
+            }
         } catch (Exception ignored) {
-        } finally { try { socket.close(); } catch (Exception ignored) {} }
+        } finally { 
+            try { socket.close(); } catch (Exception ignored) {} 
+        }
     }
 
     public void stop() {
