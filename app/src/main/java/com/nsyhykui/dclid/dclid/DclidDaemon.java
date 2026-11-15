@@ -119,54 +119,50 @@ public class DclidDaemon {
             out.write("OK\n".getBytes(StandardCharsets.UTF_8)); out.flush();
 
             String nextLine = reader.readLine();
+            String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
+
+            // ★ 核心修复 1：单发模式直接使用原生 Process，绝不碰 PTY
+            if (nextLine != null && nextLine.startsWith("EXEC ")) {
+                String cmd = nextLine.substring(5);
+                // 注入 alias 执行单发命令
+                String startCmd = "alias pm='" + dcliBinPath + " pm'; alias device='" + dcliBinPath + " device'; " + cmd;
+                
+                Process process = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", startCmd});
+                InputStream in = process.getInputStream();
+                InputStream err = process.getErrorStream();
+                
+                byte[] buf = new byte[4096]; int len;
+                while ((len = in.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
+                while ((len = err.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
+                process.waitFor();
+                client.close(); 
+                return; // 单发执行完毕直接退出
+            }
+
+            // ★ 核心修复 2：交互模式才使用 PTY 盲打注入
             int rows = 24, cols = 80;
-            String execCmd = null;
-            
-            if (nextLine != null) {
-                if (nextLine.startsWith("SIZE ")) {
-                    String[] p = nextLine.split(" ");
-                    rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
-                } else if (nextLine.startsWith("EXEC ")) {
-                    execCmd = nextLine.substring(5);
-                }
+            if (nextLine != null && nextLine.startsWith("SIZE ")) {
+                String[] p = nextLine.split(" ");
+                rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
             PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, "/system/bin/sh -i");
             if (pty == null) { client.close(); return; }
 
             try {
-                String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-                if (execCmd != null) {
-                    // 单发模式：直接执行，不需要 alias 污染屏幕
-                    Thread.sleep(100);
-                    pty.outputStream.write((execCmd + "\nexit\n").getBytes(StandardCharsets.UTF_8));
-                    pty.outputStream.flush();
-                } else {
-                    // 交互模式：关回显 -> 注入 alias -> 开回显
-                    pty.outputStream.write("stty -echo\n".getBytes(StandardCharsets.UTF_8));
-                    pty.outputStream.flush();
-                    Thread.sleep(50);
-
-                    String inject = "alias pm='" + dcliBinPath + " pm'\n" +
-                                    "alias device='" + dcliBinPath + " device'\n" +
-                                    "export PS1='$ '\n";
-                    pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
-                    pty.outputStream.flush();
-                    Thread.sleep(50);
-
-                    pty.outputStream.write("stty echo\n".getBytes(StandardCharsets.UTF_8));
-                    pty.outputStream.flush();
-                }
+                String inject = "alias pm='" + dcliBinPath + " pm'\n" +
+                                "alias device='" + dcliBinPath + " device'\n" +
+                                "export PS1='$ '\n";
+                Thread.sleep(100);
+                pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
+                pty.outputStream.flush();
             } catch (Exception ignored) {}
 
             InputStream clientIn = client.getInputStream();
             OutputStream clientOut = client.getOutputStream();
             
             new Thread(() -> transfer(pty.inputStream, clientOut, client)).start();
-            
-            if (execCmd == null) {
-                new Thread(() -> transfer(clientIn, pty.outputStream, client)).start();
-            }
+            new Thread(() -> transfer(clientIn, pty.outputStream, client)).start();
 
         } catch (Exception e) { 
             try { client.close(); } catch (Exception ignored) {} 
