@@ -3,7 +3,6 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <termios.h>
-#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,15 +12,9 @@ Java_com_nsyhykui_dclid_shell_PtyBridge_createSubprocess(
     struct winsize sz;
     sz.ws_row = rows; sz.ws_col = cols; sz.ws_xpixel = 0; sz.ws_ypixel = 0;
     int master_fd;
-    pid_t pid = forkpty(&master_fd, NULL, NULL, &sz);
+    pid_t pid = forkpty(&master_fd, NULL, NULL, &sz); // 传 NULL，保持原生终端属性
 
     if (pid == 0) {
-        // ★ 核心修复：关闭 ECHO 回显，让注入的 alias 不在屏幕上显示
-        struct termios t;
-        if (tcgetattr(0, &t) == 0) {
-            t.c_lflag &= ~ECHO;
-            tcsetattr(0, TCSANOW, &t);
-        }
         const char *cmd = (*env)->GetStringUTFChars(env, cmdStr, 0);
         execl("/system/bin/sh", "sh", "-c", cmd, NULL);
         _exit(1);

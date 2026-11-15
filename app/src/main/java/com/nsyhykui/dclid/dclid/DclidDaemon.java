@@ -120,38 +120,51 @@ public class DclidDaemon {
 
             String nextLine = reader.readLine();
             int rows = 24, cols = 80;
-            if (nextLine != null && nextLine.startsWith("SIZE ")) {
-                String[] p = nextLine.split(" ");
-                rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
+            String execCmd = null;
+            
+            if (nextLine != null) {
+                if (nextLine.startsWith("SIZE ")) {
+                    String[] p = nextLine.split(" ");
+                    rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
+                } else if (nextLine.startsWith("EXEC ")) {
+                    execCmd = nextLine.substring(5);
+                }
             }
 
-            String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-            
-            // 纯 alias 注入，无 PATH 劫持
-            String startCmd = "alias pm='" + dcliBinPath + " pm'; " +
-                              "alias device='" + dcliBinPath + " device'; " +
-                              "export PS1='$ '; " +
-                              "exec /system/bin/sh -i";
-
-            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, startCmd);
+            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, "/system/bin/sh -i");
             if (pty == null) { client.close(); return; }
 
-            // 单发模式：追加执行并退出
-            if (nextLine != null && nextLine.startsWith("EXEC ")) {
-                String cmd = nextLine.substring(5);
-                try {
-                    Thread.sleep(100); // 等待 alias 生效
-                    pty.outputStream.write((cmd + "\nexit\n").getBytes(StandardCharsets.UTF_8));
+            try {
+                String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
+                if (execCmd != null) {
+                    // 单发模式：直接执行，不需要 alias 污染屏幕
+                    Thread.sleep(100);
+                    pty.outputStream.write((execCmd + "\nexit\n").getBytes(StandardCharsets.UTF_8));
                     pty.outputStream.flush();
-                } catch (Exception ignored) {}
-            }
+                } else {
+                    // 交互模式：关回显 -> 注入 alias -> 开回显
+                    pty.outputStream.write("stty -echo\n".getBytes(StandardCharsets.UTF_8));
+                    pty.outputStream.flush();
+                    Thread.sleep(50);
+
+                    String inject = "alias pm='" + dcliBinPath + " pm'\n" +
+                                    "alias device='" + dcliBinPath + " device'\n" +
+                                    "export PS1='$ '\n";
+                    pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
+                    pty.outputStream.flush();
+                    Thread.sleep(50);
+
+                    pty.outputStream.write("stty echo\n".getBytes(StandardCharsets.UTF_8));
+                    pty.outputStream.flush();
+                }
+            } catch (Exception ignored) {}
 
             InputStream clientIn = client.getInputStream();
             OutputStream clientOut = client.getOutputStream();
             
             new Thread(() -> transfer(pty.inputStream, clientOut, client)).start();
             
-            if (nextLine == null || !nextLine.startsWith("EXEC ")) {
+            if (execCmd == null) {
                 new Thread(() -> transfer(clientIn, pty.outputStream, client)).start();
             }
 
