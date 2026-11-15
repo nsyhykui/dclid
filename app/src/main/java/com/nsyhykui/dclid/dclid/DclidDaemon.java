@@ -23,10 +23,12 @@ public class DclidDaemon {
     private volatile boolean isTcpRunning = false;
     private ServerSocket tcpServer;
     private LocalServerSocket udsServer;
+    private String sockPath;
 
     public DclidDaemon(Context context) {
         this.context = context.getApplicationContext();
         this.rpcHandler = new CommandHandler(context, new DhizukuDpm(context));
+        this.sockPath = context.getCacheDir().getAbsolutePath() + "/dclid.sock";
         AuthManager.get(context).setPromptListener(uid -> AuthOverlay.show(context, uid, "unknown"));
     }
 
@@ -54,7 +56,10 @@ public class DclidDaemon {
 
     private void startUdsServer() {
         try {
-            udsServer = new LocalServerSocket("dclid_rpc");
+            File sockFile = new File(sockPath);
+            if (sockFile.exists()) sockFile.delete();
+            // 使用绝对路径，最稳妥
+            udsServer = new LocalServerSocket(sockPath);
             while (isRunning) {
                 LocalSocket socket = udsServer.accept();
                 new Thread(() -> {
@@ -121,25 +126,30 @@ public class DclidDaemon {
             String nextLine = reader.readLine();
             String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
 
-            // ★ 核心修复 1：单发模式直接使用原生 Process，绝不碰 PTY
+            // ★ 核心修复：单发模式直接在 Java 端拦截并执行，不使用 alias 避免报错
             if (nextLine != null && nextLine.startsWith("EXEC ")) {
-                String cmd = nextLine.substring(5);
-                // 注入 alias 执行单发命令
-                String startCmd = "alias pm='" + dcliBinPath + " pm'; alias device='" + dcliBinPath + " device'; " + cmd;
-                
-                Process process = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", startCmd});
-                InputStream in = process.getInputStream();
-                InputStream err = process.getErrorStream();
-                
-                byte[] buf = new byte[4096]; int len;
-                while ((len = in.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
-                while ((len = err.read(buf)) != -1) { out.write(buf, 0, len); out.flush(); }
-                process.waitFor();
-                client.close(); 
-                return; // 单发执行完毕直接退出
+                String cmd = nextLine.substring(5).trim();
+                String result;
+                if (cmd.startsWith("pm ") || cmd.equals("pm") || cmd.startsWith("device ")) {
+                    result = rpcHandler.process(cmd);
+                } else {
+                    Process p = Runtime.getRuntime().exec(new String[]{"/system/bin/sh", "-c", cmd});
+                    InputStream in = p.getInputStream();
+                    InputStream err = p.getErrorStream();
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    byte[] buf = new byte[4096]; int len;
+                    while ((len = in.read(buf)) != -1) baos.write(buf, 0, len);
+                    while ((len = err.read(buf)) != -1) baos.write(buf, 0, len);
+                    p.waitFor();
+                    result = new String(baos.toByteArray(), StandardCharsets.UTF_8);
+                }
+                out.write(result.getBytes(StandardCharsets.UTF_8));
+                out.flush();
+                client.close();
+                return;
             }
 
-            // ★ 核心修复 2：交互模式才使用 PTY 盲打注入
+            // 交互模式
             int rows = 24, cols = 80;
             if (nextLine != null && nextLine.startsWith("SIZE ")) {
                 String[] p = nextLine.split(" ");
@@ -149,12 +159,21 @@ public class DclidDaemon {
             PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, "/system/bin/sh -i");
             if (pty == null) { client.close(); return; }
 
+            // ★ 静默注入：关闭回显 -> 注入 PATH 和 alias -> 恢复回显
             try {
-                String inject = "alias pm='" + dcliBinPath + " pm'\n" +
+                pty.outputStream.write("stty -echo\n".getBytes(StandardCharsets.UTF_8));
+                pty.outputStream.flush();
+                Thread.sleep(100);
+
+                String inject = "export DCLID_SOCK='" + sockPath + "'\n" +
+                                "alias pm='" + dcliBinPath + " pm'\n" +
                                 "alias device='" + dcliBinPath + " device'\n" +
                                 "export PS1='$ '\n";
-                Thread.sleep(100);
                 pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
+                pty.outputStream.flush();
+                Thread.sleep(100);
+
+                pty.outputStream.write("stty echo\n".getBytes(StandardCharsets.UTF_8));
                 pty.outputStream.flush();
             } catch (Exception ignored) {}
 
@@ -187,5 +206,6 @@ public class DclidDaemon {
         isTcpRunning = false;
         try { if (tcpServer != null) tcpServer.close(); } catch (Exception ignored) {}
         try { if (udsServer != null) udsServer.close(); } catch (Exception ignored) {}
+        try { new File(sockPath).delete(); } catch (Exception ignored) {}
     }
 }
