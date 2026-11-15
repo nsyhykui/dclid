@@ -6,8 +6,10 @@ import java.io.FileOutputStream;
 
 public class PtyBridge {
     static { System.loadLibrary("pty_bridge"); }
+    
     public static native int createSubprocess(int rows, int cols, String cmdStr);
     public static native void setPtyWindowSize(int fd, int rows, int cols);
+    public static native void setEcho(int fd, boolean enable);
 
     public static class PtySession {
         public final int fd;

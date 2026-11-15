@@ -6,7 +6,7 @@ import java.io.*;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.Arrays;
+import java.nio.charset.StandardCharsets;
 
 public class PtySessionHandler implements Runnable {
     private static final int ID_STDIN = 0;
@@ -30,9 +30,30 @@ public class PtySessionHandler implements Runnable {
     public void run() {
         try {
             int[] size = readWindowSize();
-            File envFile = prepareEnvFile();
-            pty = PtyBridge.createSession(size[0], size[1], envFile.getAbsolutePath());
+            
+            // ★ 纯净启动 sh -i，不需要通过 ENV 读文件
+            pty = PtyBridge.createSession(size[0], size[1], "/system/bin/sh -i");
             if (pty == null) { client.close(); return; }
+
+            // ★ 完美无痕注入
+            try {
+                String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
+                String inject = "alias pm='" + dcliBinPath + " pm'\n" +
+                                "alias device='" + dcliBinPath + " device'\n" +
+                                "export PS1='$ '\n";
+
+                // 1. 关闭回显
+                PtyBridge.setEcho(pty.fd, false);
+                Thread.sleep(50); // 等一下 sh 初始化
+
+                // 2. 盲打注入，此时屏幕上绝对看不到任何字符
+                pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
+                pty.outputStream.flush();
+                Thread.sleep(50);
+
+                // 3. 恢复回显
+                PtyBridge.setEcho(pty.fd, true);
+            } catch (Exception ignored) {}
 
             Thread readThread = new Thread(this::ptyToClient, "pty-read");
             readThread.start();
@@ -59,17 +80,6 @@ public class PtySessionHandler implements Runnable {
             }
         }
         return result;
-    }
-
-    private File prepareEnvFile() throws IOException {
-        String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-        File envFile = new File(context.getFilesDir(), "dclirc");
-        try (FileWriter fw = new FileWriter(envFile)) {
-            fw.write("alias pm='" + dcliBinPath + " pm'\n");
-            fw.write("alias device='" + dcliBinPath + " device'\n");
-            fw.write("export PS1='$ '\n");
-        }
-        return envFile;
     }
 
     private void ptyToClient() {
