@@ -23,41 +23,19 @@ public class DclidDaemon {
     private volatile boolean isTcpRunning = false;
     private ServerSocket tcpServer;
     private LocalServerSocket udsServer;
-    private String binPath;
 
     public DclidDaemon(Context context) {
         this.context = context.getApplicationContext();
         this.rpcHandler = new CommandHandler(context, new DhizukuDpm(context));
-        this.binPath = context.getCacheDir().getAbsolutePath() + "/bin";
         AuthManager.get(context).setPromptListener(uid -> AuthOverlay.show(context, uid, "unknown"));
     }
 
     public void start() {
         if (isRunning) return;
         isRunning = true;
-        setupBinDir();
         new Thread(this::startUdsServer).start();
         startTcpServerThread();
         startWatchdog();
-    }
-
-    // 准备 bin 目录，将 so 伪装成 pm 和 device
-    private void setupBinDir() {
-        File binDir = new File(binPath);
-        if (!binDir.exists()) binDir.mkdirs();
-        
-        String soPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
-        File pmFile = new File(binDir, "pm");
-        File deviceFile = new File(binDir, "device");
-        
-        try {
-            // 使用软链接 (ln -s) 或者直接拷贝
-            Runtime.getRuntime().exec(new String[]{"ln", "-sf", soPath, pmFile.getAbsolutePath()}).waitFor();
-            Runtime.getRuntime().exec(new String[]{"ln", "-sf", soPath, deviceFile.getAbsolutePath()}).waitFor();
-            // 确保权限
-            Runtime.getRuntime().exec(new String[]{"chmod", "755", pmFile.getAbsolutePath()}).waitFor();
-            Runtime.getRuntime().exec(new String[]{"chmod", "755", deviceFile.getAbsolutePath()}).waitFor();
-        } catch (Exception ignored) {}
     }
 
     private void startWatchdog() {
@@ -147,22 +125,22 @@ public class DclidDaemon {
                 rows = Integer.parseInt(p[1]); cols = Integer.parseInt(p[2]);
             }
 
-            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, "/system/bin/sh -i");
+            String dcliBinPath = context.getApplicationInfo().nativeLibraryDir + "/libdcli_bin.so";
+            
+            // 纯 alias 注入，无 PATH 劫持
+            String startCmd = "alias pm='" + dcliBinPath + " pm'; " +
+                              "alias device='" + dcliBinPath + " device'; " +
+                              "export PS1='$ '; " +
+                              "exec /system/bin/sh -i";
+
+            PtyBridge.PtySession pty = PtyBridge.createSession(rows, cols, startCmd);
             if (pty == null) { client.close(); return; }
 
-            // ★ 核心修复：静默注入 PATH 环境变量，彻底废弃 alias
-            try {
-                String inject = "export PATH='" + binPath + "':$PATH\n" +
-                                "export PS1='$ '\n";
-                Thread.sleep(100);
-                pty.outputStream.write(inject.getBytes(StandardCharsets.UTF_8));
-                pty.outputStream.flush();
-            } catch (Exception ignored) {}
-
+            // 单发模式：追加执行并退出
             if (nextLine != null && nextLine.startsWith("EXEC ")) {
                 String cmd = nextLine.substring(5);
                 try {
-                    Thread.sleep(50); 
+                    Thread.sleep(100); // 等待 alias 生效
                     pty.outputStream.write((cmd + "\nexit\n").getBytes(StandardCharsets.UTF_8));
                     pty.outputStream.flush();
                 } catch (Exception ignored) {}
